@@ -138,6 +138,7 @@ D3D12HelloGenericPrograms::D3D12HelloGenericPrograms(UINT width, UINT height, st
     m_scissorRect(0, 0, static_cast<LONG>(width), static_cast<LONG>(height)),
     m_rtvDescriptorSize(0)
 {
+    m_useWarpDevice = true;
     m_viewport[0] = CD3DX12_VIEWPORT( 0.0f, 0.0f, static_cast<float>(width/2), static_cast<float>(height) );
     m_viewport[1] = CD3DX12_VIEWPORT((float)width/2, 0.0f, static_cast<float>(width/2), static_cast<float>(height));
 
@@ -281,18 +282,11 @@ void D3D12HelloGenericPrograms::LoadAssets()
 
     // Create a generic program (like a PSO) in a state object, including first compiling shaders
     {
-        ComPtr<ID3DBlob> vertexShader;
+        ComPtr<ID3DBlob> meshShader;
         ComPtr<ID3DBlob> pixelShader;
 
-        ThrowIfFailed(CompileDxilLibraryFromFile(GetAssetFullPath(L"shaders.hlsl").c_str(), L"VSMain", L"vs_6_0", nullptr, 0, &vertexShader));
-        ThrowIfFailed(CompileDxilLibraryFromFile(GetAssetFullPath(L"shaders.hlsl").c_str(), L"PSMain", L"ps_6_0", nullptr, 0, &pixelShader));
-
-        // Define the vertex input layout.
-        D3D12_INPUT_ELEMENT_DESC inputElementDescs[] =
-        {
-            { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-            { "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
-        };
+        ThrowIfFailed(CompileDxilLibraryFromFile(GetAssetFullPath(L"shaders.hlsl").c_str(), L"MeshMain", L"ms_6_8", nullptr, 0, &meshShader));
+        ThrowIfFailed(CompileDxilLibraryFromFile(GetAssetFullPath(L"shaders.hlsl").c_str(), L"PixelMain", L"ps_6_8", nullptr, 0, &pixelShader));
 
         // Describe and create the graphics pipeline as a generic program.
 
@@ -321,23 +315,12 @@ void D3D12HelloGenericPrograms::LoadAssets()
         auto pConfig = SODesc.CreateSubobject<CD3DX12_STATE_OBJECT_CONFIG_SUBOBJECT>();
         pConfig->SetFlags(D3D12_STATE_OBJECT_FLAG_ALLOW_STATE_OBJECT_ADDITIONS);
 
-        // Define the building blocks for the program - the individual subobjects / shaders
-        auto pIL = SODesc.CreateSubobject<CD3DX12_INPUT_LAYOUT_SUBOBJECT>();
-
-        for (UINT i = 0; i < _countof(inputElementDescs); i++)
-        {
-            pIL->AddInputLayoutElementDesc(inputElementDescs[i]);
-        }
         auto pRootSig = SODesc.CreateSubobject<CD3DX12_GLOBAL_ROOT_SIGNATURE_SUBOBJECT>();
         pRootSig->SetRootSignature(m_rootSignature.Get());
         auto pVS = SODesc.CreateSubobject<CD3DX12_DXIL_LIBRARY_SUBOBJECT>();
-        CD3DX12_SHADER_BYTECODE bcVS(vertexShader.Get());
+        CD3DX12_SHADER_BYTECODE bcVS(meshShader.Get());
         pVS->SetDXILLibrary(&bcVS);
-        pVS->DefineExport(L"myRenamedVS", L"*"); // Take whatever the shader is and rename it to myVS.  Instead of "*" could have used the actual name of the shader.
-                                          // Also could have omitted this line completely, which would just import all exports in the binary (just one shader here), 
-                                          // using the name of the shader in the lib. Could also have listed the name of the shader in the lib on its own for the same effect
-                                          // (would ensure that the shader you are expecting is actually there)
-
+ 
         auto pPS = SODesc.CreateSubobject<CD3DX12_DXIL_LIBRARY_SUBOBJECT>();
         CD3DX12_SHADER_BYTECODE bcPS(pixelShader.Get());
         pPS->SetDXILLibrary(&bcPS); // by not listing exports, just taking whatever is in the library
@@ -348,8 +331,7 @@ void D3D12HelloGenericPrograms::LoadAssets()
         //auto pDepth = SODesc.CreateSubobject<CD3DX12_DEPTH_STENCIL_DESC2>();
         //auto pSampleMask = SODesc.CreateSubobject<CD3DX12_SAMPLE_MASK_SUBOBJECT>();
         //auto pSampleDesc = SODesc.CreateSubobject<CD3DX12_SAMPLE_DESC_SUBOBJECT>();
-        auto pPrimitiveTopology = SODesc.CreateSubobject<CD3DX12_PRIMITIVE_TOPOLOGY_SUBOBJECT>();
-        pPrimitiveTopology->SetPrimitiveTopologyType(D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE);
+
         auto pRTFormats = SODesc.CreateSubobject<CD3DX12_RENDER_TARGET_FORMATS_SUBOBJECT>();
         pRTFormats->SetNumRenderTargets(1);
         pRTFormats->SetRenderTargetFormat(0, DXGI_FORMAT_R8G8B8A8_UNORM);
@@ -359,10 +341,8 @@ void D3D12HelloGenericPrograms::LoadAssets()
 
         auto pGenericProgram = SODesc.CreateSubobject<CD3DX12_GENERIC_PROGRAM_SUBOBJECT>();
         pGenericProgram->SetProgramName(L"myGenericProgram");
-        pGenericProgram->AddExport(L"myRenamedVS");
-        pGenericProgram->AddExport(L"PSMain");
-        pGenericProgram->AddSubobject(*pIL);
-        pGenericProgram->AddSubobject(*pPrimitiveTopology);
+        pGenericProgram->AddExport(L"MeshMain");
+        pGenericProgram->AddExport(L"PixelMain");
         pGenericProgram->AddSubobject(*pRTFormats);
         // Notice the root signature isn't being added to the list here.  Root signatures are associated with
         // shader exports directly, not programs.  The single root sig in the state objcet above with no associations defined automatically
@@ -375,70 +355,7 @@ void D3D12HelloGenericPrograms::LoadAssets()
         m_genericProgram[0] = pSOProperties->GetProgramIdentifier(L"myGenericProgram");
     }
 
-    // Add an additional program thatMake an additional permutationCreate the pipeline state, which includes compiling and loading shaders.
-    {
-        ComPtr<ID3DBlob> pixelShader2;
-
-        ThrowIfFailed(CompileDxilLibraryFromFile(GetAssetFullPath(L"shaders.hlsl").c_str(), L"PSMain2", L"ps_6_0", nullptr, 0, &pixelShader2));
-
-        // Define the vertex input layout.
-        D3D12_INPUT_ELEMENT_DESC inputElementDescs[] =
-        {
-            { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-            { "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
-        };
-
-        CD3DX12_STATE_OBJECT_DESC SODesc;
-        SODesc.SetStateObjectType(D3D12_STATE_OBJECT_TYPE_EXECUTABLE);
-
-        // Optional flag to allow state object additions
-        auto pConfig = SODesc.CreateSubobject<CD3DX12_STATE_OBJECT_CONFIG_SUBOBJECT>();
-        pConfig->SetFlags(D3D12_STATE_OBJECT_FLAG_ALLOW_STATE_OBJECT_ADDITIONS);
-
-        // First define the building blocks for the program - the individual subobjects / shaders
-        // Subobjects like input layout etc. need to be redefined, as there currently isn't a way to define them in DXIL such that 
-        // they can be reused from an existing state object being added to.  Root signatures can be defined in DXIL and reused (by referering to them
-        // by name), but that isn't shown here.
-        auto pIL = SODesc.CreateSubobject<CD3DX12_INPUT_LAYOUT_SUBOBJECT>();
-
-        for (UINT i = 0; i < _countof(inputElementDescs); i++)
-        {
-            pIL->AddInputLayoutElementDesc(inputElementDescs[i]);
-        }
-        auto pRootSig = SODesc.CreateSubobject<CD3DX12_GLOBAL_ROOT_SIGNATURE_SUBOBJECT>();
-        pRootSig->SetRootSignature(m_rootSignature.Get());
-
-        // not listing any exports means what's in the bytecode will be used as is, which is "PSMain2"
-        auto pPS = SODesc.CreateSubobject<CD3DX12_DXIL_LIBRARY_SUBOBJECT>();
-
-        CD3DX12_SHADER_BYTECODE bcPS(pixelShader2.Get());
-        pPS->SetDXILLibrary(&bcPS);
-
-        auto pPrimitiveTopology = SODesc.CreateSubobject<CD3DX12_PRIMITIVE_TOPOLOGY_SUBOBJECT>();
-        pPrimitiveTopology->SetPrimitiveTopologyType(D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE);
-        auto pRTFormats = SODesc.CreateSubobject<CD3DX12_RENDER_TARGET_FORMATS_SUBOBJECT>();
-        pRTFormats->SetNumRenderTargets(1);
-        pRTFormats->SetRenderTargetFormat(0, DXGI_FORMAT_R8G8B8A8_UNORM);
-
-
-        auto pGenericProgram = SODesc.CreateSubobject<CD3DX12_GENERIC_PROGRAM_SUBOBJECT>();
-        pGenericProgram->SetProgramName(L"myGenericProgram2");
-        pGenericProgram->AddExport(L"myRenamedVS");
-        pGenericProgram->AddExport(L"PSMain2");
-        pGenericProgram->AddSubobject(*pIL);
-        pGenericProgram->AddSubobject(*pPrimitiveTopology);
-        pGenericProgram->AddSubobject(*pRTFormats);
-        // Notice the root signature isn't being added to the list here.  Root signatures are associated with
-        // shader exports directly, not programs.  The single root sig in the state objcet above with no associations defined automatically
-        // becomes a default root sig that applies to all exports, so myVS and myPS get it.
-
-        ThrowIfFailed(m_device->AddToStateObject(SODesc, m_stateObject[0].Get(), IID_PPV_ARGS(&m_stateObject[1])));
-
-        ComPtr<ID3D12StateObjectProperties1> pSOProperties;
-        ThrowIfFailed(m_stateObject[1]->QueryInterface(IID_PPV_ARGS(&pSOProperties)));
-        m_genericProgram[1] = pSOProperties->GetProgramIdentifier(L"myGenericProgram2");
-    }
-
+    
     // Create the command list.
     ThrowIfFailed(m_device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, m_commandAllocator.Get(), nullptr, IID_PPV_ARGS(&m_commandList)));
 
@@ -557,18 +474,13 @@ void D3D12HelloGenericPrograms::PopulateCommandList()
     // Record commands.
     const float clearColor[] = { 0.0f, 0.2f, 0.4f, 1.0f };
     m_commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
-    m_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    m_commandList->IASetVertexBuffers(0, 1, &m_vertexBufferView);
 
-    for (UINT i = 0; i < 2; i++)
-    {
-        D3D12_SET_PROGRAM_DESC SP;
-        SP.Type = D3D12_PROGRAM_TYPE_GENERIC_PIPELINE;
-        SP.GenericPipeline.ProgramIdentifier = m_genericProgram[i];
-        m_commandList->SetProgram(&SP);
-        m_commandList->RSSetViewports(1, &m_viewport[i]);
-        m_commandList->DrawInstanced(3, 1, 0, 0);
-    }
+    D3D12_SET_PROGRAM_DESC SP;
+    SP.Type = D3D12_PROGRAM_TYPE_GENERIC_PIPELINE;
+    SP.GenericPipeline.ProgramIdentifier = m_genericProgram[0];
+    m_commandList->SetProgram(&SP);
+    m_commandList->RSSetViewports(1, &m_viewport[0]);
+    m_commandList->DispatchMesh(1, 1, 1);
 
     // Indicate that the back buffer will now be used to present.
     m_commandList->ResourceBarrier(1, &CD3DX12_RESOURCE_BARRIER::Transition(m_renderTargets[m_frameIndex].Get(), D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT));

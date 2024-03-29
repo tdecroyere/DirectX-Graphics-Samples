@@ -1,37 +1,44 @@
-//*********************************************************
-//
-// Copyright (c) Microsoft. All rights reserved.
-// This code is licensed under the MIT License (MIT).
-// THIS CODE IS PROVIDED *AS IS* WITHOUT WARRANTY OF
-// ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING ANY
-// IMPLIED WARRANTIES OF FITNESS FOR A PARTICULAR
-// PURPOSE, MERCHANTABILITY, OR NON-INFRINGEMENT.
-//
-//*********************************************************
-
-struct PSInput
+struct Vertex
 {
-    float4 position : SV_POSITION;
-    float4 color : COLOR;
+    float3 Position;
+    float4 Color;
 };
 
-PSInput VSMain(float4 position : POSITION, float4 color : COLOR)
+struct VertexOutput
 {
-    PSInput result;
+    float4 Position: SV_Position;
+    float4 Color: TEXCOORD0;
+};
 
-    result.position = position;
-    result.color = color;
+static Vertex triangleVertices[] =
+{
+    { float3(-0.5, 0.5, 0.0), float4(1.0, 0.0, 0.0, 1.0) },
+    { float3(0.5, 0.5, 0.0), float4(0.0, 1.0, 0.0, 1.0) },
+    { float3(-0.5, -0.5, 0.0), float4(0.0, 0.0, 1.0, 1.0) }
+};
 
-    return result;
+
+[OutputTopology("triangle")]
+[NumThreads(32, 1, 1)]
+void MeshMain(in uint groupThreadId : SV_GroupThreadID, out vertices VertexOutput vertices[3], out indices uint3 indices[1])
+{
+    const uint meshVertexCount = 3;
+
+    SetMeshOutputCounts(meshVertexCount, 1);
+
+    if (groupThreadId < meshVertexCount)
+    {
+        vertices[groupThreadId].Position = float4(triangleVertices[groupThreadId].Position, 1.0);
+        vertices[groupThreadId].Color = triangleVertices[groupThreadId].Color;
+    }
+
+    if (groupThreadId == 0)
+    {
+        indices[groupThreadId] = uint3(0, 1, 2);
+    }
 }
 
-float4 PSMain(PSInput input) : SV_TARGET
+float4 PixelMain(const VertexOutput input) : SV_Target0
 {
-    return input.color;
+    return input.Color; 
 }
-
-float4 PSMain2(PSInput input) : SV_TARGET
-{
-    return float4(input.color.r, 1, input.color.b, 1);
-}
-
